@@ -10,7 +10,7 @@ class Logger {
 public:
     Logger(const string &name){ file.open(name, ios::app); }
     ~Logger(){ if(file.is_open()) file.close(); }
-    void log(const string &msg){ if(file.is_open()) file << msg << ""; }
+    void log(const string &msg){ if(file.is_open()) file << msg << endl; }
 };
 
 class VehicleException : public exception {
@@ -23,17 +23,17 @@ public:
 
 class VehicleNotAvailable : public VehicleException{
 public:
-    VehicleNotAvailable(string id): VehicleException("Vehicle not available: " + id){}
+    VehicleNotAvailable(string id): VehicleException("Kendaraan sedang disewa: " + id){}
 };
 
 class BatteryLowException : public VehicleException{
 public:
-    BatteryLowException(string id): VehicleException("Battery low on EV: " + id){}
+    BatteryLowException(string id): VehicleException("Baterai rendah pada ElectricCar: " + id){}
 };
 
 class OverloadException : public VehicleException{
 public:
-    OverloadException(string id): VehicleException("Overload truck: " + id){}
+    OverloadException(string id): VehicleException("Muatan melebihi batas pada Truck: " + id){}
 };
 
 class InvalidReturnException : public VehicleException{
@@ -49,15 +49,16 @@ protected:
 public:
     Vehicle(string id_, string model_, double r): id(id_), model(model_), dailyRate(r){}
     virtual ~Vehicle(){}
+
     string getId() const { return id; }
     bool rented() const { return isRented; }
     void setRented(bool b){ isRented = b; }
 
     virtual double rentCost(int days) const = 0;
-    virtual void start(){}
+    virtual void start() {}
     virtual unique_ptr<Vehicle> clone() const = 0;
 
-    virtual void info(){ cout << id << " - " << model << " rate: " << dailyRate; }
+    virtual void info(){ cout << id << " - " << model << " | Tarif: Rp" << dailyRate; }
 };
 
 class Car : public Vehicle{
@@ -66,7 +67,7 @@ public:
     Car(string id,string m,double r,int c): Vehicle(id,m,r), capacity(c){}
     double rentCost(int d) const override { return dailyRate * d; }
     unique_ptr<Vehicle> clone() const override { return make_unique<Car>(*this); }
-    void info() override { Vehicle::info(); cout << " cap: " << capacity; }
+    void info() override { Vehicle::info(); cout << " | Kapasitas: " << capacity; }
 };
 
 class Truck : public Vehicle{
@@ -77,20 +78,22 @@ public:
     double rentCost(int d,double load) const { return dailyRate*d + load*0.05; }
     double getMaxLoad() const { return maxLoad; }
     unique_ptr<Vehicle> clone() const override { return make_unique<Truck>(*this); }
-    void info() override { Vehicle::info(); cout << " maxLoad: " << maxLoad; }
+    void info() override { Vehicle::info(); cout << " | Max Load: " << maxLoad << "kg"; }
 };
 
 class ElectricCar : public Vehicle{
     double cap, charge;
 public:
     ElectricCar(string id,string m,double r,double c,double ch): Vehicle(id,m,r), cap(c), charge(ch){}
-    double rentCost(int d) const override { return dailyRate*d + (charge < cap*0.2 ? 20:0); }
+    double rentCost(int d) const override { return dailyRate*d + (charge < cap*0.2 ? 20000 : 0); }
+
     void start() override {
-        if(charge < cap*0.1) throw BatteryLowException(id);
+        if(charge < cap * 0.2) throw BatteryLowException(id);
     }
+
     void chargeEV(double kwh){ charge = min(cap, charge+kwh); }
     unique_ptr<Vehicle> clone() const override { return make_unique<ElectricCar>(*this); }
-    void info() override { Vehicle::info(); cout << " charge: "<<charge<<"/"<<cap; }
+    void info() override { Vehicle::info(); cout << " | Baterai: "<<charge<<"/"<<cap<<" kWh"; }
 };
 
 class RentalManager{
@@ -101,16 +104,20 @@ public:
 
     void addVehicle(const Vehicle &v){ fleet.push_back(v.clone()); }
 
-    Vehicle* find(string id){ for(auto &v: fleet) if(v->getId()==id) return v.get(); return nullptr; }
+    Vehicle* find(string id){ 
+        for(auto &v: fleet) 
+            if(v->getId()==id) return v.get(); 
+        return nullptr;
+    }
 
     void rent(string vid,int days,double load = -1){
         Vehicle* v = find(vid);
-        if(!v) throw VehicleException("Vehicle not found");
+        if(!v) throw VehicleException("Kendaraan tidak ditemukan!");
         if(v->rented()) throw VehicleNotAvailable(vid);
 
         if(auto t = dynamic_cast<Truck*>(v)){
             if(load >= 0 && load > t->getMaxLoad()){
-                log.log("Overload: " + vid);
+                log.log("[ERROR] Overload: " + vid);
                 throw OverloadException(vid);
             }
         }
@@ -120,34 +127,40 @@ public:
         }
 
         double cost = (dynamic_cast<Truck*>(v) && load>=0) ?
-            dynamic_cast<Truck*>(v)->rentCost(days,load): v->rentCost(days);
+            dynamic_cast<Truck*>(v)->rentCost(days,load) : v->rentCost(days);
 
-        cout << "Biaya sewa: " << cost << "";
+        cout << "Biaya total sewa: Rp" << cost << endl;
         v->setRented(true);
-        log.log("Rent success: " + vid);
+        log.log("[INFO] Rental berhasil: " + vid);
     }
 
     void returnVehicle(string vid,int actual,bool damage){
         Vehicle* v = find(vid);
-        if(!v) throw VehicleException("Vehicle not found");
-        if(!v->rented()) throw InvalidReturnException("Vehicle not rented");
+        if(!v) throw VehicleException("Kendaraan tidak ditemukan!");
+        if(!v->rented()) throw InvalidReturnException("Kendaraan belum pernah disewa!");
 
-        int reserved = 3; 
+        int reserved = 3;
         int late = max(0, actual - reserved);
         double penalty = late * (v->rentCost(1)*0.5);
 
         if(damage){
             double dmg = v->rentCost(1)*5;
-            if(dmg > 1000){ log.log("Severe damage: "+vid); throw InvalidReturnException("Severe damage!"); }
+            if(dmg > 100000){
+                log.log("[ERROR] Damage parah: " + vid);
+                throw InvalidReturnException("Kerusakan parah! Pengembalian ditolak.");
+            }
             penalty += dmg;
         }
 
-        cout << "Total penalty: " << penalty << "";
+        cout << "Total denda: Rp" << penalty << endl;
         v->setRented(false);
-        log.log("Return success: " + vid);
+        log.log("[INFO] Pengembalian berhasil: " + vid);
     }
 
-    void list(){ for(auto &v: fleet){ v->info(); cout << ""; } }
+    void list(){ 
+        cout << "\n=== DAFTAR KENDARAAN ===\n";
+        for(auto &v: fleet){ v->info(); cout << endl; }
+    }
 };
 
 int main(){
@@ -156,14 +169,14 @@ int main(){
 
     int menu;
     while(true){
-        cout << "===== MENU RENTAL KENDARAAN =====" << endl;
-        cout << "1. Tambah kendaraan" << endl;
-        cout << "2. Lihat daftar kendaraan" << endl;
-        cout << "3. Sewa kendaraan" << endl;
-        cout << "4. Kembalikan kendaraan" << endl;
-        cout << "5. Charge baterai EV" << endl;
-        cout << "0. Keluar" << endl;
-        cout << "Pilih menu: ";
+        cout << "\n===== MENU RENTAL KENDARAAN =====\n";
+        cout << "1. Tambah kendaraan\n";
+        cout << "2. Lihat daftar kendaraan\n";
+        cout << "3. Sewa kendaraan\n";
+        cout << "4. Kembalikan kendaraan\n";
+        cout << "5. Isi baterai EV\n";
+        cout << "0. Keluar\n";
+        cout << "Pilih: ";
         cin >> menu;
 
         if(menu == 0) break;
@@ -171,14 +184,14 @@ int main(){
         try{
             if(menu == 1){
                 int jenis;
-                cout << "1. Car" << endl << "2. Truck" << endl << "3. ElectricCar"<< endl << "Pilih jenis kendaraan: ";
+                cout << "\nPilih jenis kendaraan:\n1. Car\n2. Truck\n3. ElectricCar\n-> ";
                 cin >> jenis;
 
                 string id, model;
                 double rate;
-                cout << "Masukkan ID: "; cin >> id;
-                cout << "Masukkan Model: "; cin >> model;
-                cout << "Tarif per hari: "; cin >> rate;
+                cout << "ID kendaraan: "; cin >> id;
+                cout << "Model: "; cin >> model;
+                cout << "Tarif per hari: Rp"; cin >> rate;
 
                 if(jenis == 1){
                     int cap;
@@ -187,48 +200,61 @@ int main(){
                 }
                 else if(jenis == 2){
                     double maxL;
-                    cout << "Max load (kg): "; cin >> maxL;
+                    cout << "Maksimal muatan (kg): "; cin >> maxL;
                     rm.addVehicle(Truck(id, model, rate, maxL));
                 }
                 else if(jenis == 3){
                     double cap, ch;
                     cout << "Kapasitas baterai (kWh): "; cin >> cap;
-                    cout << "Isi baterai sekarang (kWh): "; cin >> ch;
+                    cout << "Isi baterai awal (kWh): "; cin >> ch;
                     rm.addVehicle(ElectricCar(id, model, rate, cap, ch));
                 }
-                cout << "Kendaraan berhasil ditambahkan!" << endl;
+
+                cout << "Kendaraan berhasil ditambahkan!\n";
             }
+
             else if(menu == 2){
                 rm.list();
-            } 
+            }
+
             else if(menu == 3){
                 string id; int hari; double muatan;
                 cout << "ID kendaraan: "; cin >> id;
                 cout << "Lama sewa (hari): "; cin >> hari;
-                cout << "Masukkan muatan (Truck), atau -1 jika bukan Truck: "; cin >> muatan;
+                cout << "Muatan (Truck), -1 jika bukan: "; cin >> muatan;
+
                 rm.rent(id, hari, muatan);
             }
+
             else if(menu == 4){
                 string id; int actual; int dmg;
                 cout << "ID kendaraan: "; cin >> id;
-                cout << "Jumlah hari aktual: "; cin >> actual;
-                cout << "Apakah rusak? (1. ya, 0. tidak): "; cin >> dmg;
+                cout << "Hari penggunaan sebenarnya: "; cin >> actual;
+                cout << "Kerusakan? (1 = Ya, 0 = Tidak): "; cin >> dmg;
+
                 rm.returnVehicle(id, actual, dmg);
             }
+
             else if(menu == 5){
                 string id; double kwh;
                 cout << "ID kendaraan: "; cin >> id;
-                cout << "Jumlah kWh untuk charge: "; cin >> kwh;
+                cout << "Berapa kWh ingin diisi: "; cin >> kwh;
 
                 Vehicle* v = rm.find(id);
+
                 if(auto ev = dynamic_cast<ElectricCar*>(v)){
                     ev->chargeEV(kwh);
-                    cout << "Berhasil mengisi baterai!";
+                    cout << "Baterai berhasil diisi!\n";
                 } else {
-                    cout << "Kendaraan ini bukan ElectricCar!";
+                    cout << "Ini bukan kendaraan listrik!\n";
                 }
             }
         }
-        catch(exception &e){ cout << "Terjadi error: " << e.what() << ""; }
+        catch(exception &e){
+            log.log(string("[ERROR] ") + e.what());
+            cout << "\n  Error: " << e.what() << endl;
+        }
     }
+
+    cout << "\nTerima kasih telah menggunakan sistem rental!\n";
 }
